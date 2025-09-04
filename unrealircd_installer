@@ -1,0 +1,412 @@
+#!/bin/bash
+
+VERSION=1.0
+
+
+echo "                                        
+           ,(((/((((((/(/((((           
+        ((/((//////////////((/(/(       
+     ((((/////////////////////////(,    
+   ,/(//////////////////////////////(   
+  (///////////    ///////(   //////((/. 
+ ///////////((   ,//////(    /////////( 
+ (/////////((    ////////   ///////////(
+ ((//////////   /((///(/    /(////////(/
+ /(////////(    //////(/   ///////////(/
+ //////////(   ///////(    ///////////( 
+  (/////////.            *(/////////((  
+   ./(////////(/     */((///////////(   
+     /(((///////////////////////((/     
+        //(///////////////////(((       
+            /((/(/(///(/(/(/(   
+        
+        UnrealIRCd Installer v$VERSION
+"
+
+# By Valware and Muse
+
+# Current Working Directory
+cwd=$(pwd)
+U=$USER
+GENCERT=""
+GENCERTBOTCERT=""
+NETWORKNAME=""
+SERVERNAME=""
+HASHED_PASS=""
+NOCHECK=""
+NICK=""
+EMAIL=""
+cloakhost2=""
+cloakhost3=""
+escaped_hash=""
+
+SETTINGS_FILE="unrealircd_installer.settings"
+
+dialog_wrapper() {
+    local result
+    # Ensure proper error handling for dialog command execution
+    if ! result=$("$@" 3>&1 1>&2 2>&3 3>&-); then
+        echo "Error executing dialog command: $*"
+        exit 1
+    fi
+    echo "$result"
+}
+
+
+dialog_inputbox() {
+    local input
+    input=$(dialog_wrapper dialog --inputbox "$1" 10 50)
+    if [ -z "$input" ]; then
+        echo "Error: No input provided for '$1'"
+        exit 1
+    fi
+    echo "$input"
+}
+
+dialog_passwordbox() {
+    local input
+    input=$(dialog_wrapper dialog --passwordbox "$1" 10 50)
+    if [ -z "$input" ]; then
+        echo "Error: No password provided for '$1'"
+        exit 1
+    fi
+    echo "$input"
+}
+
+dialog_yesno() {
+    if ! dialog_wrapper dialog --yesno "$1" "10" "50"; then
+        # Defaulting to No if the user cancels or exits
+        echo "no"
+    else
+        echo "yes"
+    fi
+}
+# Function to load settings from the file
+load_settings() {
+    source "$SETTINGS_FILE"
+    escaped_hash=$(echo "$HASHED_PASS" | sed 's/\$/\\\$/g')
+    if [ "$NOCHECK" == "1" ]; then
+        echo "Using previous settings"
+    else
+        local yesno
+        boxtext=$(printf "Found settings:\n\tServer name: %s\n\tNetwork name: %s\n\tAdmin %s (%s)\n\nDo you want to use these settings?" "$SERVERNAME" "$NETWORKNAME" "$NICK" "$EMAIL")
+        yesno=$(dialog_yesno "$boxtext")
+        yesno=$(echo "$yesno" | xargs)
+        
+        if [ "$yesno" != "yes" ]; then
+            create_settings
+        fi
+    fi
+}
+
+# Function to prompt user for inputs and save them to the file
+create_settings() {
+    SERVERNAME=$(dialog_inputbox "Enter the Server Name (e.g., irc.example.com):")
+    NETWORKNAME=$(dialog_inputbox "Enter the Network Name (e.g., ExampleNET):")
+    NICK=$(dialog_inputbox "Enter your IRC nick:")
+    PASS=$(dialog_passwordbox "Enter a password (for /OPER $NICK <password>):")
+    EMAIL=$(dialog_inputbox "Enter the admin email:")
+
+    # Generate a random salt
+    salt=$(openssl rand -base64 16)
+
+    # Ensure the salt is at least 8 characters (trim if necessary)
+    salt=${salt:0:8}
+
+    # Hash the password using Argon2
+    HASHED_PASS=$(echo -n "$PASS" | argon2 "$salt" -id -t 2 -m 12 -p 2 -e)
+
+    # Check if HASHED_PASS is empty or argon2 failed
+    if [ -z "$HASHED_PASS" ]; then
+        echo "Error: Failed to generate Argon2 hash. Ensure 'argon2' is installed and working properly."
+        exit 1
+    fi
+    echo $HASHED_PASS
+    escaped_hash=$(echo "$HASHED_PASS" | sed 's/\$/\\\$/g')
+    # Save settings to file
+    cat > "$SETTINGS_FILE" <<EOF
+SERVERNAME="$SERVERNAME"
+NETWORKNAME="$NETWORKNAME"
+EMAIL="$EMAIL"
+NICK="$NICK"
+HASHED_PASS="$escaped_hash"
+EOF
+    echo "Settings saved to $SETTINGS_FILE"
+}
+
+
+if [ "$1" == "help" ]; then
+    echo "Thanks for choosing UnrealIRCd Installer by Valware. 😺"
+    echo
+    echo "  ./unrealircd_installer takes any of the following parameters:"
+    echo " "
+    echo "  nocheck           Will install the latest UnrealIRCd without confirmation"
+    echo "  prereq            Installs the prerequisites for UnrealIRCd"
+    echo "  addalias          Adds an \"unrealircd\" alias to the current users environment"
+    echo "  runwhendone       Runs UnrealIRCd after it's installed"
+    echo
+    echo "Example:"
+    echo "  ./unrealircd_installer prereq nocheck addalias runwhendone"
+    echo 
+    exit 0
+fi
+
+if [[ " $* " == *" prereq "* ]]; then
+    echo "Installing pre-requisites: build-essential pkg-config gdb libssl-dev libpcre2-dev libargon2-dev libsodium-dev libc-ares-dev libcurl4-openssl-dev argon2 dialog"
+    sudo apt-get install build-essential pkg-config gdb libssl-dev libpcre2-dev libargon2-dev libsodium-dev libc-ares-dev libcurl4-openssl-dev argon2 dialog
+fi
+
+if [[ " $* " == *" addalias "* ]]; then
+    # Define the alias and the file to add it to
+    echo "alias unrealircd='/home/$U/unrealircd/unrealircd'" >> ~/.bashrc
+    echo "Alias added. Please run 'source ~/.bashrc' to apply it to the current shell session."
+fi
+
+if [[ " $* " == *" nocheck "* ]]; then
+    NOCHECK="1"
+fi
+
+
+echo "Looking for saved settings"
+# Check if settings file exists
+if [ -f "$SETTINGS_FILE" ]; then
+    echo "Found settings file: $SETTINGS_FILE"
+    load_settings
+else
+    create_settings
+fi
+
+
+# URL to fetch the JSON containing version info
+JSON_URL="https://www.unrealircd.org/downloads/list.json"
+
+# Fetch the JSON data
+LATEST_JSON=$(curl -s $JSON_URL)
+
+# Parse the JSON to get both stable and beta version info
+STABLE_URL=$(echo $LATEST_JSON | jq -r '.["6.0"].Stable.downloads.src')
+STABLE_VERSION=$(echo $LATEST_JSON | jq -r '.["6.0"].Stable.version')
+BETA_URL=$(echo $LATEST_JSON | jq -r '.["6.0"].Beta.downloads.src')
+BETA_VERSION=$(echo $LATEST_JSON | jq -r '.["6.0"].Beta.version')
+
+# Check if we got valid URLs
+if [ -z "$STABLE_URL" ] || [ "$STABLE_URL" = "null" ]; then
+    echo "Error: Failed to fetch the stable download URL. Please check the JSON URL or your network connection."
+    exit 1
+fi
+
+# Variables to store selected version info
+SELECTED_URL=""
+SELECTED_VERSION=""
+
+if [ "$NOCHECK" != "1" ]; then
+    # Check if beta version is available
+    if [ -n "$BETA_URL" ] && [ "$BETA_URL" != "null" ]; then
+        # Offer choice between stable and beta
+        VERSION_CHOICE=$(dialog --stdout --menu "Choose UnrealIRCd version to install:" 15 60 2 \
+            "1" "Stable - v$STABLE_VERSION" \
+            "2" "Beta - v$BETA_VERSION")
+        
+        case $VERSION_CHOICE in
+            1)
+                SELECTED_URL=$STABLE_URL
+                SELECTED_VERSION=$STABLE_VERSION
+                ;;
+            2)
+                SELECTED_URL=$BETA_URL
+                SELECTED_VERSION=$BETA_VERSION
+                ;;
+            *)
+                clear
+                echo "Aborting UnrealIRCd installer"
+                exit 1
+                ;;
+        esac
+    else
+        # Only stable version available
+        SELECTED_URL=$STABLE_URL
+        SELECTED_VERSION=$STABLE_VERSION
+    fi
+    
+    yn=$(dialog_yesno "Selected version:\n  UnrealIRCd v$SELECTED_VERSION\n\nWould you like to install this version?")
+    yn=$(echo "$yn" | xargs)
+    if [ "$yn" != "yes" ]; then
+        clear
+        echo "Aborting UnrealIRCd installer"
+        echo $yn
+        exit 1
+    fi
+else
+    # If NOCHECK is set, default to stable version
+    SELECTED_URL=$STABLE_URL
+    SELECTED_VERSION=$STABLE_VERSION
+fi
+(
+# Download the tarball
+echo "XXX"
+echo "8"
+echo "Downloading UnrealIRCd $SELECTED_VERSION..."
+echo "XXX"
+FILENAME=$(basename $SELECTED_URL)
+curl -O $SELECTED_URL > /dev/null 2>&1
+
+# Check if the file was downloaded successfully
+if [ ! -f "$FILENAME" ]; then
+    echo "Download failed. Please try again."
+    exit 1
+fi
+
+echo "XXX"
+echo "15"
+echo "Extracting archive..."
+echo "XXX"
+# Extract the tarball
+tar -xzf $FILENAME
+if [ $? -ne 0 ]; then
+    echo "Failed to unzip the file. Please check if tar is installed and try again."
+    exit 1
+fi
+
+cd unrealircd-$SELECTED_VERSION
+
+echo "XXX"
+echo "25"
+echo "Generating configuration settings..."
+echo "XXX"
+cat > "config.settings" <<EOF
+# These are some default values generated by Valware's Auto Install script
+BASEPATH="$cwd/unrealircd"
+BINDIR="$cwd/unrealircd/bin"
+DATADIR="$cwd/unrealircd/data"
+CONFDIR="$cwd/unrealircd/conf"
+MODULESDIR="$cwd/unrealircd/modules"
+LOGDIR="$cwd/unrealircd/logs"
+CACHEDIR="$cwd/unrealircd/cache"
+DOCDIR="$cwd/unrealircd/doc"
+TMPDIR="$cwd/unrealircd/tmp"
+PRIVATELIBDIR="$cwd/unrealircd/lib/"
+MAXCONNECTIONS_REQUEST="auto"
+NICKNAMEHISTORYLENGTH="2000"
+GEOIP="classic"
+DEFPERM="0600"
+SSLDIR=""
+REMOTEINC="1"
+CURLDIR="/usr"
+NOOPEROVERRIDE=""
+OPEROVERRIDEVERIFY=""
+GENCERTIFICATE=""
+SANITIZER="asan"
+EXTRAPARA=""
+ADVANCED=""
+EOF
+
+echo "XXX"
+echo "40"
+echo "Running UnrealIRCd configuration script..."
+echo "XXX"
+./Config -quick > /dev/null 2>&1
+
+echo "XXX"
+echo "65"
+echo "Compiling UnrealIRCd (this may take a few minutes)..."
+echo "XXX"
+make > /dev/null 2>&1
+
+echo "XXX"
+echo "75"
+echo "Installing UnrealIRCd to target directory..."
+echo "XXX"
+make install > /dev/null 2>&1
+
+echo "XXX"
+echo "82"
+echo "Setting up configuration files..."
+echo "XXX"
+cd ~/unrealircd/conf/
+cp examples/example.conf unrealircd.conf
+sed -i "s/irc.example.org/$SERVERNAME/g" unrealircd.conf
+sed -i "s/ExampleNET Server/$NETWORKNAME/g" unrealircd.conf
+sed -i "s/ExampleNET/$NETWORKNAME/g" unrealircd.conf
+
+echo "XXX"
+echo "88"
+echo "Generating security keys and cloak hosts..."
+echo "XXX"
+while [ ${#cloakhost2} -lt 80 ]; do
+    cloakhost2+=$(cat /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 80)
+done
+cloakhost2=${cloakhost2:0:80} # Trim to 80 chars
+while [ ${#cloakhost3} -lt 80 ]; do
+    cloakhost3+=$(cat /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 80)
+done
+cloakhost3=${cloakhost3:0:80} # Trim to 80 chars
+
+sed -i -e '0,/and another one/s//'"$cloakhost2"'/' \
+       -e '0,/and another one/s//'"$cloakhost3"'/' unrealircd.conf
+
+echo "XXX"
+echo "94"
+echo "Configuring server settings and admin credentials..."
+echo "XXX"
+# Ensure EMAIL is defined and valid
+if [ -z "$EMAIL" ]; then
+    echo "Error: EMAIL variable is not set!"
+    exit 1
+fi
+
+sed -i "s|\$argon2id\.\.etc\.\.|$escaped_hash|" unrealircd.conf
+sed -i "s/set\.this\.to\.email\.address/$EMAIL/" unrealircd.conf
+sed -i "s/email@example\.org/$EMAIL/" unrealircd.conf
+sed -i "s/Bob Smith/$NICK/" unrealircd.conf
+sed -i "s/\n\t\"bob\";//" unrealircd.conf
+
+sed -i "s/bobsmith/$NICK/" unrealircd.conf
+
+echo "XXX"
+echo "97"
+echo "Generating SSL/TLS certificates..."
+echo "XXX"
+cd tls
+
+KEY_FILE="server.key.pem"
+CERT_FILE="server.cert.pem"
+
+# Generate a private key
+openssl genrsa -out "$KEY_FILE" 2048 > /dev/null 2>&1
+
+# Create a self-signed certificate
+echo "XXX"
+echo "100"
+echo "Finalizing SSL certificate setup..."
+echo "XXX"
+openssl req -new -x509 -key "$KEY_FILE" -out "$CERT_FILE" -days "365" -subj "/CN=$SERVERNAME" > /dev/null 2>&1
+
+) | dialog --gauge "Installing UnrealIRCd $SELECTED_VERSION" 12 70 0
+RUNWHENDONE=$(dialog_yesno "UnrealIRCd has been successfully downloaded, installed and configured.\n\nWould you like to start UnrealIRCd?")
+RUNWHENDONE=$(echo "$RUNWHENDONE" | xargs)
+clear
+cd ~/unrealircd
+# Start UnrealIRCd finally waha
+if [[ " $* " == *" runwhendone "* ]]; then
+    ./unrealircd start
+elif [ "$RUNWHENDONE" == "yes" ]; then
+    ./unrealircd start
+fi
+
+# Leave off in the config directory to make a point about it
+echo "************************************************************"
+echo "You can now edit your unrealircd.conf by typing:"
+echo "  nano ~/unrealircd/conf/unrealircd.conf"
+echo
+echo "Don't forget to rehash after! ('./unrealircd rehash' or '/rehash' from IRC)"
+echo
+echo "How to configure your UnrealIRCd server:      https://www.unrealircd.org/docs/Configuration"
+echo "How to get a valid TLS certificate for free:  https://www.unrealircd.org/docs/Using_Let%27s_Encrypt_with_UnrealIRCd"
+echo "                                              https://www.unrealircd.org/docs/Setting_up_certbot_for_use_with_UnrealIRCd"
+echo
+echo "Third-party modules and how to install:       https://modules.unrealircd.org/"
+echo
+echo "YouTube tutorials:                            https://youtube.com/@unrealircdtutorials"
+echo "Sponsor UnrealIRCd:                           https://www.patreon.com/UnrealIRCd"
+echo
+echo "************************************************************"
