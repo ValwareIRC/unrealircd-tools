@@ -19,7 +19,10 @@ This leaves behind an `unrealircd_installer.settings` file which will speed up a
 
 ### Parameters
 `prereq` - Installs the system prerequisites (requires sudo) (DO NOT RUN AS ROOT USER)
+
 `nocheck` - Installs the latest UnrealIRCd without confirmation
+
 `addalias` - Adds an \"unrealircd\" alias to the current users environment, so you can `unrealircd rehash` from anywhere :D
+
 `runwhendone` - Runs UnrealIRCd after it's installed without confirmation
 
