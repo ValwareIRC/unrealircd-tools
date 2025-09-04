@@ -1,4 +1,4 @@
-# unrealircd-tools
+# UnrealIRCd Tools by Valware
 ## UnrealIRCd Configuration Parser in PHP
 This is a simple PHP script that parses `*.conf` files to do with UnrealIRCd. Nice if you're making something and need to check the config.
 
