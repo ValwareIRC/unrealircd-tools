@@ -18,7 +18,7 @@ When it's done, you will be offered if you want to start UnrealIRCd already, and
 This leaves behind an `unrealircd_installer.settings` file which will speed up an installation process if you need to use it again.
 
 ### Parameters
-`prereq` - Installs the system prerequisites (requires sudo) (DO NOT RUN AS ROOT USER)
+`prereq` - Installs the system prerequisites (requires sudo) (DO NOT RUN AS ROOT USER) (do not run `sudo ./unrealircd_installer`, the script calls a `sudo` anyway, you'll just need to put in the sudo user password)
 
 `nocheck` - Installs the latest UnrealIRCd without confirmation
 
