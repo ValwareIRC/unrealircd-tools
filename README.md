@@ -7,7 +7,10 @@ This is a simple PHP script that parses `*.conf` files to do with UnrealIRCd. Ni
 This is the fastest way to set up an UnrealIRCd server from scratch.
 
 ### Prerequisites
-Needs `xdialog` and `argon2` libs
+Needs `xdialog` and `argon2` packages/libs
+```
+sudo apt install dialog argon2
+```
 
 
 ### Instructions
